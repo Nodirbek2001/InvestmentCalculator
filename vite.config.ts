@@ -4,15 +4,15 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react()],
   build: {
-    target: 'esnext', // Use modern JS syntax for smaller bundle size
+    target: 'esnext',
     minify: 'esbuild',
     cssCodeSplit: true,
+    chunkSizeWarningLimit: 1000,
     rollupOptions: {
       output: {
         manualChunks: {
-          // Split vendor code to cache effective libraries separately
           'react-vendor': ['react', 'react-dom'],
-          'charts': ['recharts'], 
+          'charts': ['recharts'],
           'ui-icons': ['lucide-react']
         }
       }
