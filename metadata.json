@@ -1,0 +1,5 @@
+{
+  "name": "Compound Interest Calculator",
+  "description": "A comprehensive compound interest calculator supporting multiple currencies, manual/auto modes, and visualization with Recharts.",
+  "requestFramePermissions": []
+}
