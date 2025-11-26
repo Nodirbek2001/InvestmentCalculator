@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import {
   LineChart,
   Line,
@@ -17,7 +17,6 @@ import {
   DollarSign,
   Target,
   PiggyBank,
-  Globe,
   Download,
   Share2,
   Calculator,
@@ -58,6 +57,55 @@ const CURRENCIES: Currency[] = [
   { code: 'BYN', symbol: 'Br', name: 'Белорусский рубль', flag: '🇧🇾' },
 ];
 
+// --- Optimized Components ---
+
+// Memoized to prevent re-renders on mouse movement over charts
+const CustomTooltip = React.memo(({ active, payload, label, currencySymbol }: any) => {
+  if (active && payload && payload.length) {
+    const format = (num: number) => new Intl.NumberFormat('ru-RU').format(Math.round(num));
+    
+    return (
+      <div className="bg-white p-4 border border-gray-200 shadow-xl rounded-xl min-w-[200px]">
+        <p className="text-gray-500 text-xs font-semibold mb-3 uppercase tracking-wider">{label} год</p>
+        <div className="space-y-3">
+          {/* Invested Section */}
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-2">
+              <div className="w-2.5 h-2.5 rounded-full bg-blue-500 shadow-sm shadow-blue-200"></div>
+              <span className="text-sm font-medium text-gray-600">Вложено</span>
+            </div>
+            <span className="text-sm font-bold text-gray-900 tabular-nums">
+              {format(payload[0].value)} {currencySymbol}
+            </span>
+          </div>
+          
+          {/* Earned Section */}
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-2">
+              <div className="w-2.5 h-2.5 rounded-full bg-green-500 shadow-sm shadow-green-200"></div>
+              <span className="text-sm font-medium text-gray-600">Накоплено %</span>
+            </div>
+            <span className="text-sm font-bold text-green-600 tabular-nums">
+              +{format(payload[1].value)} {currencySymbol}
+            </span>
+          </div>
+
+          <div className="h-px bg-gray-100 my-1"></div>
+          
+          {/* Total Section */}
+          <div className="flex items-center justify-between gap-4 pt-1">
+            <span className="text-sm font-bold text-gray-800">Всего</span>
+            <span className="text-base font-bold text-gray-900 tabular-nums">
+              {format(payload[0].value + payload[1].value)} {currencySymbol}
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  return null;
+});
+
 export default function CompoundInterestCalculator() {
   // --- State ---
   const [years, setYears] = useState<number>(10);
@@ -65,11 +113,9 @@ export default function CompoundInterestCalculator() {
   const [inputMode, setInputMode] = useState<'manual' | 'auto'>('manual');
   const [selectedCurrency, setSelectedCurrency] = useState<Currency>(CURRENCIES[1]); 
   
-  // "Initial Contribution" in auto mode logic acts as "First Year Contribution".
-  // "Start Amount" is the capital you HAVE RIGHT NOW (Year 0).
   const [startAmount, setStartAmount] = useState<number>(0); 
-  const [initialContribution, setInitialContribution] = useState<number>(1000); // For Auto Mode base
-  const [growthRate, setGrowthRate] = useState<number>(10); // % growth of contribution
+  const [initialContribution, setInitialContribution] = useState<number>(1000); 
+  const [growthRate, setGrowthRate] = useState<number>(10); 
   
   const [manualContributions, setManualContributions] = useState<number[]>(
     Array.from({ length: 50 }, (_, i) => 
@@ -92,13 +138,11 @@ export default function CompoundInterestCalculator() {
     });
   }, [years]);
 
-  // SEO: Dynamic Title Update
-  // Updates the browser tab title to show specific results, increasing user engagement and click-through
   useEffect(() => {
-    // Calculate final format for title
     const monthlyRate = annualRate / 100 / 12;
     let totalCapital = startAmount;
-    // Quick approx calc for title only
+    
+    // Optimized calculation loop for title
     for (let year = 1; year <= years; year++) {
       let contribution = inputMode === 'manual' ? (manualContributions[year - 1] || 0) : initialContribution * Math.pow(1 + growthRate / 100, year - 1);
       totalCapital = (totalCapital * Math.pow(1 + monthlyRate, 12)) + (contribution * Math.pow(1 + monthlyRate, 12));
@@ -110,41 +154,54 @@ export default function CompoundInterestCalculator() {
 
   // --- Handlers ---
 
-  const updateContribution = (index: number, value: string) => {
+  const updateContribution = useCallback((index: number, value: string) => {
     const newContributions = [...manualContributions];
-    // Remove non-digits/dots. If empty, it becomes 0.
     const cleanValue = value === '' ? 0 : (parseFloat(value.replace(/[^0-9.]/g, '')) || 0);
     newContributions[index] = cleanValue;
     setManualContributions(newContributions);
-  };
+  }, [manualContributions]);
 
-  const formatNumber = (num: number) => {
+  const formatNumber = useCallback((num: number) => {
     return new Intl.NumberFormat('ru-RU').format(Math.round(num));
+  }, []);
+
+  // Lazy Load html2pdf only when needed
+  const loadHtml2Pdf = async () => {
+    if ((window as any).html2pdf) return (window as any).html2pdf;
+    
+    return new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
+      script.defer = true;
+      script.onload = () => resolve((window as any).html2pdf);
+      script.onerror = reject;
+      document.body.appendChild(script);
+    });
   };
 
-  const handleDownloadPDF = () => {
+  const handleDownloadPDF = async () => {
     if (!reportRef.current) return;
     setIsGeneratingPdf(true);
     
-    // Check if html2pdf is loaded
-    if (typeof (window as any).html2pdf === 'undefined') {
-      alert('Библиотека PDF еще не загружена. Пожалуйста, подождите секунду и попробуйте снова.');
+    try {
+      const html2pdf = await loadHtml2Pdf();
+      
+      const element = reportRef.current;
+      const opt = {
+        margin:       [10, 10, 10, 10],
+        filename:     `investment_plan_${new Date().toISOString().split('T')[0]}.pdf`,
+        image:        { type: 'jpeg', quality: 0.98 },
+        html2canvas:  { scale: 2, useCORS: true, logging: false },
+        jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      };
+
+      await html2pdf().set(opt).from(element).save();
+    } catch (error) {
+      console.error("PDF Generation failed:", error);
+      alert('Ошибка при загрузке библиотеки PDF. Проверьте соединение.');
+    } finally {
       setIsGeneratingPdf(false);
-      return;
     }
-
-    const element = reportRef.current;
-    const opt = {
-      margin:       [10, 10, 10, 10], // top, left, bottom, right
-      filename:     `investment_plan_${new Date().toISOString().split('T')[0]}.pdf`,
-      image:        { type: 'jpeg', quality: 0.98 },
-      html2canvas:  { scale: 2, useCORS: true, logging: false },
-      jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
-    };
-
-    (window as any).html2pdf().set(opt).from(element).save().then(() => {
-      setIsGeneratingPdf(false);
-    });
   };
 
   const handleShare = async () => {
@@ -155,43 +212,28 @@ export default function CompoundInterestCalculator() {
     const clipboardText = `${title}\n${text}\n${url}`;
 
     const performCopy = async () => {
-      // 1. Попытка использовать современный Clipboard API
       if (navigator.clipboard && window.isSecureContext) {
         try {
           await navigator.clipboard.writeText(clipboardText);
           alert('Скопировано!');
-          return; // Успешно, выходим
+          return;
         } catch (err) {
-          console.warn('Clipboard API failed, trying fallback...', err);
-          // Если не получилось, идем к варианту ниже (fallback)
+          // ignore, fallthrough
         }
       }
 
-      // 2. Fallback через document.execCommand('copy')
       try {
         const textArea = document.createElement("textarea");
         textArea.value = clipboardText;
-        
-        // Стили, чтобы элемент не был виден пользователю, но был в DOM
         textArea.style.position = "fixed";
-        textArea.style.left = "0";
-        textArea.style.top = "0";
-        textArea.style.opacity = "0";
-        
+        textArea.style.left = "-9999px";
         document.body.appendChild(textArea);
         textArea.focus();
         textArea.select();
-        
         const successful = document.execCommand('copy');
         document.body.removeChild(textArea);
-        
-        if (successful) {
-          alert('Скопировано!');
-        } else {
-          alert('Не удалось скопировать автоматически.');
-        }
+        if (successful) alert('Скопировано!');
       } catch (err) {
-        console.error('Fallback copy failed', err);
         alert('Ошибка при копировании.');
       }
     };
@@ -200,8 +242,6 @@ export default function CompoundInterestCalculator() {
       try {
         await navigator.share(shareData);
       } catch (err) {
-        // Если пользователь отменил (AbortError), ничего не делаем.
-        // Если другая ошибка, пробуем копировать.
         if (err instanceof Error && err.name !== 'AbortError') {
           await performCopy();
         }
@@ -217,7 +257,6 @@ export default function CompoundInterestCalculator() {
     const monthlyRate = annualRate / 100 / 12;
     const data: YearlyData[] = [];
     
-    // Start with the initial capital (money you have right now)
     let totalCapital = startAmount;
     let totalInvested = startAmount;
     let freedomYear: number | null = null;
@@ -228,24 +267,16 @@ export default function CompoundInterestCalculator() {
       if (inputMode === 'manual') {
         yearlyContribution = manualContributions[year - 1] || 0;
       } else {
-        // Auto: Year 1 = initialContribution, Year 2 = Year 1 * (1+growth)...
         yearlyContribution = initialContribution * Math.pow(1 + growthRate / 100, year - 1);
       }
       
-      const previousCapital = totalCapital;
-      
-      // Capital grows by interest
-      const compoundedExisting = previousCapital * Math.pow(1 + monthlyRate, 12);
-      
-      // Contribution grows (assuming added monthly or simply compounded annually for this model)
+      const compoundedExisting = totalCapital * Math.pow(1 + monthlyRate, 12);
       const compoundedContribution = yearlyContribution * Math.pow(1 + monthlyRate, 12);
       
       totalCapital = compoundedExisting + compoundedContribution;
       totalInvested += yearlyContribution;
 
       const earned = totalCapital - totalInvested;
-      
-      // Dividends for the NEXT year based on current capital
       const yearlyDividends = totalCapital * (annualRate / 100);
 
       if (!freedomYear && yearlyDividends >= yearlyContribution && yearlyContribution > 0) {
@@ -272,74 +303,23 @@ export default function CompoundInterestCalculator() {
     };
   }, [years, annualRate, inputMode, initialContribution, growthRate, manualContributions, startAmount]);
 
-  // --- Analysis Helpers ---
   const analysisData = useMemo(() => {
     const targetData = calculatedData.freedomYear 
       ? calculatedData.data.find(d => d.year === calculatedData.freedomYear) 
       : calculatedData.data[calculatedData.data.length - 1];
     
-    // Fallback if data array is empty
     if (!targetData) return { year: 0, annualDivs: 0, monthlyDivs: 0 };
 
-    const monthlyDivs = targetData.yearlyDividends / 12;
-    
     return {
       year: targetData.year,
       annualDivs: targetData.yearlyDividends,
-      monthlyDivs: Math.round(monthlyDivs)
+      monthlyDivs: Math.round(targetData.yearlyDividends / 12)
     };
   }, [calculatedData]);
-
-  // --- Custom Components ---
-
-  const CustomTooltip = ({ active, payload, label }: any) => {
-    if (active && payload && payload.length) {
-      return (
-        <div className="bg-white p-4 border border-gray-200 shadow-xl rounded-xl min-w-[200px]">
-          <p className="text-gray-500 text-xs font-semibold mb-3 uppercase tracking-wider">{label} год</p>
-          <div className="space-y-3">
-            {/* Invested Section */}
-            <div className="flex items-center justify-between gap-4">
-              <div className="flex items-center gap-2">
-                <div className="w-2.5 h-2.5 rounded-full bg-blue-500 shadow-sm shadow-blue-200"></div>
-                <span className="text-sm font-medium text-gray-600">Вложено</span>
-              </div>
-              <span className="text-sm font-bold text-gray-900 tabular-nums">
-                {formatNumber(payload[0].value)} {selectedCurrency.symbol}
-              </span>
-            </div>
-            
-            {/* Earned Section */}
-            <div className="flex items-center justify-between gap-4">
-              <div className="flex items-center gap-2">
-                <div className="w-2.5 h-2.5 rounded-full bg-green-500 shadow-sm shadow-green-200"></div>
-                <span className="text-sm font-medium text-gray-600">Накоплено %</span>
-              </div>
-              <span className="text-sm font-bold text-green-600 tabular-nums">
-                +{formatNumber(payload[1].value)} {selectedCurrency.symbol}
-              </span>
-            </div>
-
-            <div className="h-px bg-gray-100 my-1"></div>
-            
-            {/* Total Section */}
-            <div className="flex items-center justify-between gap-4 pt-1">
-              <span className="text-sm font-bold text-gray-800">Всего</span>
-              <span className="text-base font-bold text-gray-900 tabular-nums">
-                {formatNumber(payload[0].value + payload[1].value)} {selectedCurrency.symbol}
-              </span>
-            </div>
-          </div>
-        </div>
-      );
-    }
-    return null;
-  };
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900 font-sans p-4 md:p-8">
       
-      {/* Container for PDF Generation */}
       <main id="report-content" ref={reportRef} className="max-w-6xl mx-auto bg-gray-50">
         
         {/* Header Section */}
@@ -646,7 +626,10 @@ export default function CompoundInterestCalculator() {
                             dy={10} 
                          />
                          <YAxis hide />
-                         <Tooltip content={<CustomTooltip />} cursor={{fill: 'rgba(59, 130, 246, 0.05)'}} />
+                         <Tooltip 
+                            content={<CustomTooltip currencySymbol={selectedCurrency.symbol} />} 
+                            cursor={{fill: 'rgba(59, 130, 246, 0.05)'}} 
+                          />
                          <Legend wrapperStyle={{ paddingTop: '20px' }} iconType="circle" />
                          <Bar dataKey="invested" stackId="a" fill="#3b82f6" name="Личные вложения" radius={[0, 0, 4, 4]} />
                          <Bar dataKey="earned" stackId="a" fill="#10b981" name="Накопленные %" radius={[4, 4, 0, 0]} />
